@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 
-from app.api.deps import Admin, Reader, Runner
+from app.api.deps import Admin, Reader, Runner, filter_query, plain_text_field
 from app.api.errors import NotFound
 from app.api.pagination import PageParams, page_body, page_params, paginate
 from app.api.responses import ExactJSONResponse
@@ -25,10 +25,10 @@ QuarantineStatus = Literal["open", "resolved", "superseded"]
 def list_quarantine(
     principal: Reader,
     page: Annotated[PageParams, Depends(page_params)],
-    source: Annotated[str | None, Query()] = None,
-    reason_code: Annotated[str | None, Query(examples=["DATE_AMBIGUOUS"])] = None,
+    source: Annotated[str | None, filter_query()] = None,
+    reason_code: Annotated[str | None, filter_query(examples=["DATE_AMBIGUOUS"])] = None,
     status: Annotated[QuarantineStatus | None, Query()] = None,
-    source_record_id: Annotated[str | None, Query()] = None,
+    source_record_id: Annotated[str | None, filter_query()] = None,
 ) -> Response:
     query = select(QuarantineItem)
     if source:
@@ -64,8 +64,8 @@ class ReprocessIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     ids: list[UUID] | None = Field(default=None, max_length=1000)
-    source: str | None = None
-    reason_code: str | None = None
+    source: str | None = plain_text_field()
+    reason_code: str | None = plain_text_field()
 
     @model_validator(mode="after")
     def _needs_a_selector(self) -> "ReprocessIn":

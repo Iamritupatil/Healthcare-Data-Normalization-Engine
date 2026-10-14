@@ -4,8 +4,9 @@ from collections.abc import Callable
 from typing import Annotated, Any
 
 import structlog
-from fastapi import Depends, Request, Security
+from fastapi import Depends, Query, Request, Security
 from fastapi.security import APIKeyHeader
+from pydantic import Field
 
 from app import json_codec
 from app.api.errors import BadRequest, Forbidden, Unauthorized
@@ -85,14 +86,38 @@ def rate_limit(bucket: str, limit: Callable[[Settings], int], window_seconds: in
 
 
 async def exact_json_body(request: Request) -> Any:
-    """Parse JSON with numbers as Decimal, so 70.10 reaches the pipeline as 70.10."""
+    """Parse JSON with numbers as Decimal, so 70.10 reaches the pipeline as 70.10.
+
+    Then check that the database can store every value, so a NUL character or an absurd
+    number is a 400 here rather than a 500 from Postgres. Neither message echoes the input.
+    """
     body = await request.body()
     if not body:
         raise BadRequest("the request body is empty")
     try:
-        return json_codec.loads(body)
+        parsed = json_codec.loads(body)
+        json_codec.check_storable(parsed)
+    except json_codec.UnstorableValue as exc:
+        raise BadRequest(f"the request body cannot be stored: {exc}") from None
     except ValueError:
         raise BadRequest("the request body is not valid JSON") from None
+    return parsed
+
+
+# Free-text filters: bounded, and no control characters (a NUL cannot even be sent to
+# Postgres as a query parameter, so without this it would surface as a 500).
+FILTER_MAX_LENGTH = 200
+PLAIN_TEXT_PATTERN = r"^[^\x00-\x1f\x7f]*$"
+
+
+def filter_query(**extra: Any) -> Any:
+    """A free-text query filter. A fresh Query per parameter: FastAPI must not share one."""
+    return Query(max_length=FILTER_MAX_LENGTH, pattern=PLAIN_TEXT_PATTERN, **extra)
+
+
+def plain_text_field() -> Any:
+    """The same rule for an optional text field in a JSON request body."""
+    return Field(default=None, max_length=FILTER_MAX_LENGTH, pattern=PLAIN_TEXT_PATTERN)
 
 
 Registry = Annotated[MappingRegistry, Depends(get_registry)]

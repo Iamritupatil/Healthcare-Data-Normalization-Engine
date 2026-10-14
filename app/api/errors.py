@@ -53,6 +53,10 @@ class PayloadTooLarge(ProblemError):
     status, slug, title = 413, "payload-too-large", "Request is too large"
 
 
+class UnsupportedMediaType(ProblemError):
+    status, slug, title = 415, "unsupported-media-type", "Unsupported media type"
+
+
 class ValidationFailed(ProblemError):
     status, slug, title = 422, "validation-failed", "Record failed validation"
 
@@ -138,6 +142,16 @@ async def _http_exception(request: Request, exc: Exception) -> ProblemJSONRespon
     return problem_response(request, exc.status_code, slug, title, detail, headers)
 
 
+async def _invalid_data(request: Request, exc: Exception) -> ProblemJSONResponse:
+    # Postgres refused a value (SQLSTATE class 22: NUL in text, numeric overflow, ...). The
+    # edge checks should have caught it; this is the backstop. Its message echoes the
+    # value, so only the summary is logged and nothing of it is returned.
+    log.warning("invalid_data", **exception_summary(exc))
+    return problem_response(
+        request, 400, BadRequest.slug, BadRequest.title, "a value in the request cannot be stored"
+    )
+
+
 async def _database_unavailable(request: Request, exc: Exception) -> ProblemJSONResponse:
     log.warning("database_unavailable", **exception_summary(exc))
     return problem_response(
@@ -154,6 +168,7 @@ def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(ProblemError, _problem_error)
     app.add_exception_handler(RequestValidationError, _request_validation_error)
     app.add_exception_handler(StarletteHTTPException, _http_exception)
+    app.add_exception_handler(sa_exc.DataError, _invalid_data)
     app.add_exception_handler(sa_exc.OperationalError, _database_unavailable)
     app.add_exception_handler(sa_exc.InterfaceError, _database_unavailable)
     app.add_exception_handler(sa_exc.TimeoutError, _database_unavailable)

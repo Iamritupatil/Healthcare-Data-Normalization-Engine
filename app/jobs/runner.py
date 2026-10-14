@@ -6,7 +6,7 @@ itself is the queue. Moving to AWS SQS means adding a runner whose `submit` send
 message and a consumer that calls `process_job`; the pipeline does not change.
 
 Job kinds:
-    upload     a CSV file, processed in chunks
+    upload     a CSV or JSON file, processed in chunks
     reprocess  open quarantine items re-run with the current mapping
     verify     candidate matches waiting for the verifier
 
@@ -41,7 +41,7 @@ from app.pipeline.match import ComparisonFacts
 from app.pipeline.verify import MatchVerifier, verify_safely
 from app.services.ingest import ingest_payload, quarantine_internal_error, reprocess_item
 from app.services.matching import apply_verdict, enqueue_verification
-from app.services.uploads import parse_csv
+from app.services.uploads import UPLOAD_FORMATS, parse_upload
 
 log = get_logger(__name__)
 
@@ -116,13 +116,17 @@ def process_job(job_id: UUID, org_id: UUID, context: JobContext) -> str:
         job = session.get_one(IngestJob, job_id, options=[undefer(IngestJob.content)])
         kind, content, start = job.kind, job.content, job.processed_rows
         source, record_type = job.source, cast(RecordType | None, job.record_type)
+        # Jobs created before JSON uploads existed have no format: they are CSV.
+        upload_type = job.params.get("format", "csv")
 
     log.info("job_started", job_id=str(job_id), kind=kind, resume_from=start)
     delays = context.settings.transient_retry_delays
     if kind == "upload":
         if content is None or source is None or record_type is None:
             raise ValueError(f"upload job {job_id} has no file, source or record type")
-        rows = parse_csv(content, max_rows=context.settings.upload_max_rows).rows
+        if upload_type not in UPLOAD_FORMATS:
+            raise ValueError(f"upload job {job_id} has an unknown format")
+        rows = parse_upload(content, upload_type, max_rows=context.settings.upload_max_rows).rows
         mapping = context.registry.active(source)
         size = context.settings.job_chunk_size
         for chunk_start in range(start, len(rows), size):

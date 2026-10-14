@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import or_, select
 
-from app.api.deps import Reader
+from app.api.deps import Reader, filter_query
 from app.api.pagination import PageParams, page_body, page_params, paginate
 from app.api.responses import ExactJSONResponse
 from app.api.serializers import finding_body
@@ -22,7 +22,7 @@ def list_findings(
     principal: Reader,
     page: Annotated[PageParams, Depends(page_params)],
     kind: Annotated[Literal["conflict", "warning"] | None, Query()] = None,
-    code: Annotated[str | None, Query(examples=["CONFLICT_BIRTHDATE"])] = None,
+    code: Annotated[str | None, filter_query(examples=["CONFLICT_BIRTHDATE"])] = None,
     record_id: Annotated[UUID | None, Query()] = None,
 ) -> Response:
     query = select(Finding)
