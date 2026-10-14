@@ -1,7 +1,7 @@
 """A two-minute tour of every feature, against a running API and worker.
 
     docker compose run --rm tools python -m scripts.demo
-    python -m scripts.demo --base-url https://medvora.example.com --keys-file .demo.env
+    uv run python -m scripts.demo --base-url https://medvora.example.com --keys-file .demo.env
 
 Without --keys-file it creates two fresh demo organisations first (this needs the owner
 database password, which the tools container has). With --keys-file, use a fresh org per
@@ -91,7 +91,7 @@ ROBERT_B = {
 }
 
 
-def run(demo: Demo) -> None:
+def run(demo: Demo, public_url: str) -> None:
     demo.title("The API is up and the database answers")
     demo.show(demo.call("GET", "/health/ready", role=None).json())
 
@@ -282,8 +282,7 @@ def run(demo: Demo) -> None:
 
     demo.title("Metrics for this organisation")
     demo.show(demo.call("GET", "/metrics").json())
-    docs = str(demo.http.base_url).rstrip("/") + "/docs"
-    print(f"\n{BOLD}Done.{RESET} Interactive API docs: {docs}")
+    print(f"\n{BOLD}Done.{RESET} Interactive API docs: {public_url.rstrip('/')}/docs")
 
 
 def read_keys_file(path: Path) -> dict[str, str]:
@@ -300,6 +299,11 @@ def main() -> None:
     parser.add_argument(
         "--base-url", default=os.environ.get("MEDVORA_BASE_URL", "http://localhost:8000")
     )
+    parser.add_argument(
+        "--public-url",
+        default=os.environ.get("MEDVORA_PUBLIC_URL"),
+        help="the API as a browser reaches it, if not --base-url (inside Docker it is not)",
+    )
     parser.add_argument("--keys-file", type=Path, help="MEDVORA_*_KEY lines from scripts.seed")
     args = parser.parse_args()
 
@@ -314,7 +318,7 @@ def main() -> None:
         _, other_keys = create_org("Another Hospital Network")
         other_key = other_keys["reader"]
     try:
-        run(Demo(args.base_url, keys, other_key))
+        run(Demo(args.base_url, keys, other_key), args.public_url or args.base_url)
     except httpx.HTTPError as error:
         sys.exit(f"Could not reach the API at {args.base_url}: {error}")
 

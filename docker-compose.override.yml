@@ -12,5 +12,6 @@ services:
       - ./app/static:/srv/medvora/app/static:ro
     environment:
       # Generous limits for trying things out in the dashboard; production keeps the defaults.
-      RATE_LIMIT_UPLOADS_PER_HOUR: "200"
-      RATE_LIMIT_RECORDS_PER_MINUTE: "600"
+      # A value set in .env still wins.
+      RATE_LIMIT_UPLOADS_PER_HOUR: ${RATE_LIMIT_UPLOADS_PER_HOUR:-200}
+      RATE_LIMIT_RECORDS_PER_MINUTE: ${RATE_LIMIT_RECORDS_PER_MINUTE:-600}

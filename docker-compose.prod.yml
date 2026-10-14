@@ -5,15 +5,14 @@
 services:
   api:
     environment:
-      ENVIRONMENT: prod
       # Caddy terminates TLS and forwards the client address.
       FORWARDED_ALLOW_IPS: "*"
     command:
       ["uvicorn", "--factory", "app.main:create_app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers"]
 
-  worker:
+  tools:
     environment:
-      ENVIRONMENT: prod
+      MEDVORA_PUBLIC_URL: https://${DOMAIN}
 
   caddy:
     image: caddy:2.10-alpine

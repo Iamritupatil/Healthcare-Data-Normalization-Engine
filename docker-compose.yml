@@ -2,18 +2,24 @@
 # No ports are published here: docker-compose.override.yml (local, loaded automatically)
 # publishes them, and docker-compose.prod.yml puts Caddy in front instead. Compose merges
 # `ports` lists, so a port published in this file could not be removed by an override.
-name: medvora
+# The project name (container and volume prefix) is the folder name, so two checkouts in
+# differently named folders never share a database. COMPOSE_PROJECT_NAME overrides it.
 
 x-app: &app
   build: .
   image: medvora:latest
   restart: unless-stopped
   environment: &app-env
-    ENVIRONMENT: ${ENVIRONMENT:-local}
-    LOG_LEVEL: ${LOG_LEVEL:-INFO}
     DB_HOST: db
     DB_APP_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}
     API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in .env}
+    # Optional: passed on when set in .env; otherwise the variable is left out and the
+    # app's default applies (see .env.example).
+    LOG_LEVEL:
+    UPLOAD_MAX_BYTES:
+    UPLOAD_MAX_ROWS:
+    RATE_LIMIT_RECORDS_PER_MINUTE:
+    RATE_LIMIT_UPLOADS_PER_HOUR:
   depends_on:
     migrate:
       condition: service_completed_successfully
@@ -64,6 +70,12 @@ services:
   worker:
     <<: *app
     command: ["python", "-m", "app.jobs.worker"]
+    environment:
+      <<: *app-env
+      # The match verifier runs in the worker, so only the worker gets the Anthropic key.
+      MATCH_VERIFIER:
+      MATCH_VERIFIER_MODEL:
+      ANTHROPIC_API_KEY:
     # Time to finish the current chunk after `docker compose stop`.
     stop_grace_period: 60s
 
@@ -77,6 +89,8 @@ services:
       <<: *app-env
       DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD}
       MEDVORA_BASE_URL: http://api:8000
+      # The same API as seen from your browser, for links the demo prints.
+      MEDVORA_PUBLIC_URL: ${MEDVORA_PUBLIC_URL:-http://localhost:8000}
     depends_on:
       api:
         condition: service_healthy
