@@ -1,0 +1,85 @@
+# Base services, shared by local development and the AWS demo server.
+# No ports are published here: docker-compose.override.yml (local, loaded automatically)
+# publishes them, and docker-compose.prod.yml puts Caddy in front instead. Compose merges
+# `ports` lists, so a port published in this file could not be removed by an override.
+name: medvora
+
+x-app: &app
+  build: .
+  image: medvora:latest
+  restart: unless-stopped
+  environment: &app-env
+    ENVIRONMENT: ${ENVIRONMENT:-local}
+    LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    DB_HOST: db
+    DB_APP_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}
+    API_KEY_PEPPER: ${API_KEY_PEPPER:?set API_KEY_PEPPER in .env}
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: medvora
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD:?set DB_OWNER_PASSWORD in .env}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d medvora"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Runs `alembic upgrade head` once, as the schema owner, before the API and worker start.
+  migrate:
+    build: .
+    image: medvora:latest
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      DB_HOST: db
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD}
+      API_KEY_PEPPER: ${API_KEY_PEPPER}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    command: ["uvicorn", "--factory", "app.main:create_app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.jobs.worker"]
+    # Time to finish the current chunk after `docker compose stop`.
+    stop_grace_period: 60s
+
+  # Admin tasks that need the owner password (seed, demo). Never part of `up`:
+  #   docker compose run --rm tools python -m scripts.demo
+  tools:
+    build: .
+    image: medvora:latest
+    profiles: ["tools"]
+    environment:
+      <<: *app-env
+      DB_OWNER_PASSWORD: ${DB_OWNER_PASSWORD}
+      MEDVORA_BASE_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  pgdata:

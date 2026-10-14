@@ -1,0 +1,9 @@
+# Local development only. Compose loads this file automatically with a plain
+# `docker compose up`, and ignores it when files are named with -f (as on the server).
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"

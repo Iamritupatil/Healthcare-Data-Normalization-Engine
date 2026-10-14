@@ -1,0 +1,70 @@
+[project]
+name = "medvora"
+version = "0.1.0"
+description = "Healthcare record normalization engine: ingest, map, normalize, validate, match."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic>=1.14",
+    "anthropic>=1.0",
+    "fastapi>=0.115",
+    "httpx>=0.28",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.18",
+    "pyyaml>=6.0.2",
+    "sqlalchemy>=2.0.36",
+    "structlog>=24.4",
+    "uvicorn[standard]>=0.32",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "types-pyyaml>=6.0.12",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["migrations/versions/__pycache__"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "S", "PT", "DTZ", "T20"]
+ignore = [
+    "S101",  # assert is fine in tests
+    "S311",  # random is fine for synthetic data
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
+"scripts/**" = ["T201"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+exclude = ["^migrations/versions/"]
+
+[[tool.mypy.overrides]]
+# Tests stay type-checked, without annotating every fixture and helper.
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false
+warn_unused_ignores = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = ["integration: needs a running Postgres (see README)"]
+filterwarnings = ["error::DeprecationWarning:app.*"]

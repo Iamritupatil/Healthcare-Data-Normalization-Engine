@@ -1,0 +1,4 @@
+# Keep LF line endings on every platform. A shell script checked out with CRLF on
+# Windows fails inside the Linux containers ("/bin/sh^M: bad interpreter").
+* text=auto eol=lf
+*.sh text eol=lf
