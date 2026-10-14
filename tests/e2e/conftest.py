@@ -3,8 +3,8 @@
 They are skipped unless asked for, because they need the API and worker running:
 
     docker compose up -d
-    pip install playwright && playwright install chromium   # or use an installed browser:
-    MEDVORA_E2E=1 pytest tests/e2e                         # MEDVORA_E2E_CHANNEL=msedge|chrome
+    uv run --with playwright playwright install chromium      # or use an installed browser:
+    MEDVORA_E2E=1 uv run --with playwright pytest tests/e2e   # MEDVORA_E2E_CHANNEL=msedge|chrome
 
 MEDVORA_BASE_URL (default http://127.0.0.1:8000) picks the server, MEDVORA_E2E_DB_NAME
 (default medvora) the database it uses, and MEDVORA_E2E_HEADED=1 shows the browser.

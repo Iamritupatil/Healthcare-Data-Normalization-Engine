@@ -23,13 +23,19 @@ without ever merging two different people.
 
 ## Quick start
 
-Requires Docker with Compose.
+Requires Docker with Compose. Shell commands are written for bash (macOS, Linux, or Git
+Bash and WSL on Windows); where Windows PowerShell needs something different, a
+PowerShell version follows. These three work as written in both:
 
 ```bash
 cp .env.example .env        # then replace every change-me value (see the comment at the top)
 docker compose up -d        # Postgres, migrations, API on http://localhost:8000, worker
 docker compose run --rm tools python -m scripts.demo
 ```
+
+Compose names the containers and the database volume after the folder, so a second
+checkout in a differently named folder gets its own database (or set
+`COMPOSE_PROJECT_NAME`).
 
 The demo creates two fresh organisations and walks through every feature in about two
 minutes: ingest, idempotency, matching across sources, conflicts, namesakes, the review
@@ -42,11 +48,20 @@ without saving it, browse the quarantine, decide candidate matches, and look up 
 record beside exactly what its source sent. Interactive API docs are at
 <http://localhost:8000/docs> (use **Authorize** with an API key).
 
-To get keys for your own calls:
+To get keys for your own calls, create an organisation, save its keys to `.demo.env`
+(git-ignored; each key is shown only once) and load them into your shell. The examples
+below use `MEDVORA_INGEST_KEY`, `MEDVORA_READER_KEY` and `MEDVORA_ADMIN_KEY`.
 
 ```bash
-docker compose run --rm tools python -m scripts.seed --name "My Hospital Network"
-# prints MEDVORA_ADMIN_KEY=..., MEDVORA_INGEST_KEY=..., MEDVORA_READER_KEY=... (shown once)
+docker compose run --rm -T tools python -m scripts.seed --name "My Hospital Network" > .demo.env
+set -a; . ./.demo.env; set +a
+```
+
+PowerShell:
+
+```powershell
+docker compose run --rm -T tools python -m scripts.seed --name "My Hospital Network" | Out-File -Encoding ascii .demo.env
+Get-Content .demo.env | Where-Object { $_ -match '^MEDVORA_' } | ForEach-Object { $name, $value = $_ -split '=', 2; Set-Item "env:$name" $value }
 ```
 
 ## API
@@ -101,7 +116,7 @@ curl -s $API/v1/records -H "X-API-Key: $MEDVORA_INGEST_KEY" -H "Content-Type: ap
   "payload": {"hospital_no": "C1", "full_name": "OKAFOR, Amara", "birth_date": "03/04/1985", "sex_code": "9"}}'
 
 # Upload a CSV and poll the job
-python -m scripts.generate_data --patients 300 --bad 5 --out data
+uv run python -m scripts.generate_data --patients 300 --bad 5 --out data
 curl -s $API/v1/uploads -H "X-API-Key: $MEDVORA_INGEST_KEY" \
   -F file=@data/source-a-patients.csv -F source=source-a -F record_type=Patient
 curl -s $API/v1/jobs/<job id> -H "X-API-Key: $MEDVORA_INGEST_KEY"
@@ -112,6 +127,46 @@ curl -s $API/v1/records/<record id>/lineage -H "X-API-Key: $MEDVORA_READER_KEY"
 # Fix a mapping (new version file), restart api and worker, then re-run what failed
 curl -s $API/v1/quarantine/reprocess -H "X-API-Key: $MEDVORA_ADMIN_KEY" \
   -H "Content-Type: application/json" -d '{"reason_code": "CODE_UNMAPPED"}'
+```
+
+`uv run` uses the project's Python 3.12 (install uv from
+<https://docs.astral.sh/uv/getting-started/installation/>). Without it, upload one of the
+sample files instead: `app/static/samples/source-a-patients.csv`.
+
+PowerShell (Windows PowerShell 5.1 and later). There, `curl` is another name for
+`Invoke-WebRequest`, so the upload calls `curl.exe`, which ships with Windows:
+
+```powershell
+$API = "http://localhost:8000"
+$ingest = @{ "X-API-Key" = $env:MEDVORA_INGEST_KEY }
+
+# Ingest a patient from source A
+$patient = @{ source = "source-a"; record_type = "Patient"; payload = @{
+    mrn = "0012345"; patient_name = "ROBERT MILLER"; dob = "03/07/1984"
+    sex = "M"; phone = "(555) 201-3344"; zip = "10001" } }
+Invoke-RestMethod "$API/v1/records" -Method Post -Headers $ingest -ContentType "application/json" `
+  -Body ($patient | ConvertTo-Json) | ConvertTo-Json -Depth 10
+
+# A record that cannot be trusted: 422 with every reason. PowerShell raises on a 4xx;
+# the problem document is in the error.
+$bad = @{ source = "source-c"; record_type = "Patient"; payload = @{
+    hospital_no = "C1"; full_name = "OKAFOR, Amara"; birth_date = "03/04/1985"; sex_code = "9" } }
+try { Invoke-RestMethod "$API/v1/records" -Method Post -Headers $ingest -ContentType "application/json" -Body ($bad | ConvertTo-Json) }
+catch { $_.ErrorDetails.Message }
+
+# Upload a CSV and poll the job
+uv run python -m scripts.generate_data --patients 300 --bad 5 --out data
+$job = curl.exe -s "$API/v1/uploads" -H "X-API-Key: $env:MEDVORA_INGEST_KEY" `
+  -F file=@data/source-a-patients.csv -F source=source-a -F record_type=Patient | ConvertFrom-Json
+Invoke-RestMethod "$API/v1/jobs/$($job.id)" -Headers $ingest
+
+# Where did this value come from?
+Invoke-RestMethod "$API/v1/records/<record id>/lineage" `
+  -Headers @{ "X-API-Key" = $env:MEDVORA_READER_KEY } | ConvertTo-Json -Depth 10
+
+# Fix a mapping (new version file), restart api and worker, then re-run what failed
+Invoke-RestMethod "$API/v1/quarantine/reprocess" -Method Post -Headers @{ "X-API-Key" = $env:MEDVORA_ADMIN_KEY } `
+  -ContentType "application/json" -Body '{"reason_code": "CODE_UNMAPPED"}'
 ```
 
 ## How it works, and why
@@ -178,8 +233,13 @@ Merging two different people's histories is worse than leaving a duplicate. So:
    high enough waits for a human.
 5. **Veto-only verifier.** Pairs that pass go to a background verifier that can confirm or
    send to review, never promote. The default `RuleVerifier` vetoes on a different middle
-   initial, postal code or sex. An optional LLM verifier (`MATCH_VERIFIER=llm`) receives
-   only the comparison facts. Timeouts, errors, invalid or off-schema answers all count as
+   initial, postal code or sex. An optional LLM verifier receives only the comparison
+   facts, never patient data. It is off by default; to turn it on, set `MATCH_VERIFIER=llm`
+   and `ANTHROPIC_API_KEY` in `.env` and run `docker compose up -d worker` (only the
+   worker receives the key). It calls `claude-haiku-5-5` (`MATCH_VERIFIER_MODEL`): about a
+   dozen categorical facts in and one of three answers out is a narrow classification,
+   so a small, fast, low-cost model fits. No other model is ever called: there is no
+   fallback. Timeouts, errors, refusals, invalid or off-schema answers all count as
    `unsure`, which means review.
 6. **Namesakes and duplicates.** Same name and birth date but different national ids
    creates a `POSSIBLE_NAMESAKE` finding (also when a reviewer decides "different"). The
@@ -222,33 +282,57 @@ any consumer calls the same `process_job()`.
 
 ## Development
 
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs
+Python 3.12 and every dependency. These commands work as written in PowerShell too:
+
 ```bash
 uv sync                                   # Python 3.12 and all dependencies
 docker compose up -d db                   # Postgres on 127.0.0.1:5432
 uv run alembic upgrade head
 uv run pytest                             # unit + integration tests (skips integration if no DB)
-uv run ruff check . && uv run ruff format --check . && uv run mypy app scripts migrations tests
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app scripts migrations tests
+uv run python -m scripts.security         # bandit, pip-audit, and trivy if installed
 uv run uvicorn --factory app.main:create_app --reload
 uv run python -m app.jobs.worker
 ```
 
-Two more checks run against the whole stack (`docker compose up -d`):
+Two more checks run against the whole stack (`docker compose up -d`). The browser tests
+need a browser: install Playwright's Chromium once (first line below), or skip that and
+use an installed one with `MEDVORA_E2E_CHANNEL=msedge` or `chrome`.
 
 ```bash
-uv run python -m scripts.smoke                     # every API endpoint over HTTP, as each role
-MEDVORA_E2E=1 uv run --with playwright pytest tests/e2e   # every dashboard feature in a browser
+uv run --with playwright playwright install chromium        # once
+uv run python -m scripts.smoke                              # every API endpoint over HTTP, as each role
+MEDVORA_E2E=1 uv run --with playwright pytest tests/e2e     # every dashboard feature in a browser
 ```
 
-The browser tests use Playwright's Chromium (`uv run --with playwright playwright install
-chromium`), or an installed browser with `MEDVORA_E2E_CHANNEL=msedge` or `chrome`.
+PowerShell:
+
+```powershell
+uv run --with playwright playwright install chromium
+uv run python -m scripts.smoke
+$env:MEDVORA_E2E = "1"; uv run --with playwright pytest tests/e2e
+```
 
 Integration tests run the real app against Postgres as the real roles, in a separate
 `medvora_test` database (created by the role bootstrap), so they never touch your data
 and can run while the stack is up. Each test creates its own organisations, so
 row-level security keeps tests apart. CI (GitHub Actions) runs
 lint, strict type checks, `alembic check` (migrations must match the models), a
-downgrade/upgrade round trip, the full test suite against a Postgres service, and a
-Docker build.
+downgrade/upgrade round trip, the full test suite against a Postgres service, the
+security checks, and a Docker build.
+
+### Security checks
+
+`uv run python -m scripts.security` runs bandit over the code that ships (`app`,
+`scripts`, `migrations`) and pip-audit over every version pinned in `uv.lock`. If
+[trivy](https://trivy.dev) is installed it also runs, scanning for committed secrets,
+Dockerfile misconfiguration and vulnerable packages; otherwise the script says it was
+skipped. Any finding makes the script fail. bandit skips two rules, for the reasons given
+in `pyproject.toml`: asserts that only narrow types, and `random` in the synthetic data
+generator.
 
 ### Adding a source or fixing a mapping
 
@@ -258,7 +342,7 @@ items. Old versions stay so lineage keeps pointing at the rules that actually ra
 
 ## Evaluation
 
-`python -m scripts.evaluate` runs the pipeline and matcher over synthetic data whose
+`uv run python -m scripts.evaluate` runs the pipeline and matcher over synthetic data whose
 ground truth is known. Source B carries realistic noise (nicknames, swapped day and
 month, dropped letters, moves, missing phones), and source C contains deliberate
 namesakes. With the defaults (500 patients, seed 7):
@@ -354,8 +438,8 @@ app/
   static/       the dashboard (plain HTML, CSS and JS) and sample CSV files
 mappings/       one directory per source, one YAML file per version
 migrations/     Alembic migrations (rls.py: shared RLS and role helpers)
-scripts/        seed, generate_data, demo, evaluate
-tests/          unit/ (no database) and integration/ (real Postgres)
+scripts/        seed, generate_data, demo, evaluate, smoke, security
+tests/          unit/ (no database), integration/ (real Postgres), e2e/ (browser)
 deploy/         Postgres role bootstrap, Caddyfile
 ```
 
