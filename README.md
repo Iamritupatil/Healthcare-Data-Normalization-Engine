@@ -36,7 +36,11 @@ minutes: ingest, idempotency, matching across sources, conflicts, namesakes, the
 queue, quarantine and correction, unit and time-zone conversion, duplicate measurements,
 lineage, a CSV upload, cursor paging, org isolation, roles and metrics.
 
-Interactive API docs: <http://localhost:8000/docs> (use **Authorize** with an API key).
+Open the dashboard at <http://localhost:8000> and paste an API key: upload CSV files
+(sample files are linked on the page) and follow the job, try a single record with or
+without saving it, browse the quarantine, decide candidate matches, and look up any
+record beside exactly what its source sent. Interactive API docs are at
+<http://localhost:8000/docs> (use **Authorize** with an API key).
 
 To get keys for your own calls:
 
@@ -55,6 +59,8 @@ and it is always returned and written on every log line. Every error is an
 | Method | Path | Role | Returns |
 | --- | --- | --- | --- |
 | `GET` | `/health`, `/health/ready` | none | Process up; `ready` also checks the database |
+| `GET` | `/v1/me` | any | The organisation and role behind the key |
+| `GET` | `/v1/sources` | any | Known sources, their active mapping version and the columns they send |
 | `POST` | `/v1/records` | ingest | `201` stored, `200` already received (or a measurement already stored from another source), `422` quarantined |
 | `POST` | `/v1/validate` | ingest | Dry run: the canonical record or the errors; stores nothing |
 | `POST` | `/v1/uploads` | ingest | `202` with a job; `413` over 20 MB or 100,000 rows |
@@ -204,11 +210,15 @@ any consumer calls the same `process_job()`.
   messages from the database or validation libraries, which can echo row values.
 - Every read of patient data and every decision is written to an append-only audit log
   in the same transaction.
+- The dashboard is a static page under a strict Content-Security-Policy (only this
+  server's own script and styles). It renders every value as text, never as HTML, and
+  keeps the API key in the browser tab's session storage only.
 - API keys are `mvk_<prefix>_<secret>`: looked up by the public prefix, verified as an
   HMAC-SHA256 with a server-side pepper, compared in constant time, never stored in plain.
-- Per-key rate limits (100 records/minute, 10 uploads/hour) return `429` with
-  `Retry-After`. Request bodies are capped while they stream (1 MB, 20 MB for uploads),
-  including chunked requests that send no `Content-Length`.
+- Per-key rate limits (100 records/minute, 10 uploads/hour; raised for local use in
+  `docker-compose.override.yml`) return `429` with `Retry-After`. Request bodies are
+  capped while they stream (1 MB, 20 MB for uploads), including chunked requests that
+  send no `Content-Length`.
 
 ## Development
 
@@ -221,6 +231,16 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy app scripts m
 uv run uvicorn --factory app.main:create_app --reload
 uv run python -m app.jobs.worker
 ```
+
+Two more checks run against the whole stack (`docker compose up -d`):
+
+```bash
+uv run python -m scripts.smoke                     # every API endpoint over HTTP, as each role
+MEDVORA_E2E=1 uv run --with playwright pytest tests/e2e   # every dashboard feature in a browser
+```
+
+The browser tests use Playwright's Chromium (`uv run --with playwright playwright install
+chromium`), or an installed browser with `MEDVORA_E2E_CHANNEL=msedge` or `chrome`.
 
 Integration tests run the real app against Postgres as the real roles, in a separate
 `medvora_test` database (created by the role bootstrap), so they never touch your data
@@ -331,6 +351,7 @@ app/
   api/          routes, dependencies, RFC 9457 errors, pagination, limits
   jobs/         JobRunner, process_job, the polling worker
   observability/ logging, request ids, request middleware
+  static/       the dashboard (plain HTML, CSS and JS) and sample CSV files
 mappings/       one directory per source, one YAML file per version
 migrations/     Alembic migrations (rls.py: shared RLS and role helpers)
 scripts/        seed, generate_data, demo, evaluate
