@@ -11,14 +11,17 @@ from uuid import UUID, uuid4
 
 from sqlalchemy.orm import Session
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import build_engine, set_org
 from app.models.tables import ApiKey, Org
 from app.services.auth import ROLES, Role, generate_api_key
 
 
-def create_org(name: str, roles: tuple[Role, ...] = ROLES) -> tuple[UUID, dict[str, str]]:
-    settings = get_settings()
+def create_org(
+    name: str, roles: tuple[Role, ...] = ROLES, settings: Settings | None = None
+) -> tuple[UUID, dict[str, str]]:
+    """`settings` picks the database; by default the one the environment configures."""
+    settings = settings or get_settings()
     pepper = settings.api_key_pepper.get_secret_value()
     engine = build_engine(settings.migration_database_url, pool_size=1)
     org_id = uuid4()
