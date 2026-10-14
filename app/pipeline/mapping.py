@@ -19,7 +19,6 @@ from app.pipeline.normalize.names import NameOrder
 from app.pipeline.normalize.units import CONCEPTS
 
 RecordType = Literal["Patient", "Observation"]
-RECORD_TYPES: tuple[RecordType, ...] = ("Patient", "Observation")
 
 TARGETS: dict[RecordType, frozenset[str]] = {
     "Patient": frozenset(

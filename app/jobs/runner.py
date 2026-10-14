@@ -36,6 +36,7 @@ from app.config import Settings
 from app.db import org_transaction, system_transaction
 from app.models.tables import IngestJob, MatchLink, QuarantineItem
 from app.observability.logging import exception_summary, get_logger
+from app.pipeline.core import ReasonCode
 from app.pipeline.mapping import MappingRegistry, RecordType, SourceMapping
 from app.pipeline.match import ComparisonFacts
 from app.pipeline.verify import MatchVerifier, verify_safely
@@ -262,7 +263,7 @@ def _reprocess_chunk(
                         attempts=QuarantineItem.attempts + 1,
                         last_seen_at=datetime.now(UTC),
                         error_class="internal",
-                        last_error=f"INTERNAL_ERROR: {type(error).__name__}",
+                        last_error=f"{ReasonCode.INTERNAL_ERROR.value}: {type(error).__name__}",
                     )
                 )
                 counts["failed"] += 1

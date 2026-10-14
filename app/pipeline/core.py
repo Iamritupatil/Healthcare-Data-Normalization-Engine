@@ -91,7 +91,3 @@ class Transformation:
     original: Any
     result: Any
     details: dict[str, Any] = dataclasses.field(default_factory=dict)
-
-    @property
-    def changed(self) -> bool:
-        return self.original != self.result or self.source_field != self.field

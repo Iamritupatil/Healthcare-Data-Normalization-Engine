@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.models.tables import Finding, QuarantineItem, RawRecord, Record, TransformationLog
 from app.pipeline import match
-from app.pipeline.core import FieldError
+from app.pipeline.core import FieldError, ReasonCode
 from app.pipeline.ingest import content_hash, source_record_id
 from app.pipeline.mapping import MappingRegistry, RecordType, SourceMapping
 from app.pipeline.run import Normalized, Rejected, run_pipeline
@@ -303,10 +303,10 @@ def quarantine_internal_error(
             record_type=record_type,
             source_record_id=None,
             mapping_version=mapping.version,
-            reason_codes=["INTERNAL_ERROR"],
-            errors=[{"field": "*", "code": "INTERNAL_ERROR", "message": error_name}],
+            reason_codes=[ReasonCode.INTERNAL_ERROR.value],
+            errors=[{"field": "*", "code": ReasonCode.INTERNAL_ERROR.value, "message": error_name}],
             error_class="internal",
-            last_error=f"INTERNAL_ERROR: {error_name}",
+            last_error=f"{ReasonCode.INTERNAL_ERROR.value}: {error_name}",
             attempts=1,
             status="open",
         )

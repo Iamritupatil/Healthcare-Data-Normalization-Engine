@@ -262,12 +262,11 @@ class Smoke:
             '"effectiveDateTime":"2026-10-01T15:30:00Z"' in exact.text,
         )
 
-        newer = self.expect(
+        self.expect(
             "changed record -> new version 201",
             self.record("source-a", "Patient", {**patient, "zip": "10002"}),
             201,
         )
-        self.new_id = newer["record"]["id"] if newer else ""
         versions = self.expect(
             "GET /v1/records/{id}/versions",
             self.call("GET", f"/v1/records/{self.a_id}/versions", "reader"),
