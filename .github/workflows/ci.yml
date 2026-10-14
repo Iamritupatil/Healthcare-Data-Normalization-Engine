@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types, migrations, tests
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: medvora
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d medvora"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      # The app and tests log in as the real roles, so row-level security is exercised.
+      DB_HOST: 127.0.0.1
+      DB_OWNER_PASSWORD: ci-owner-password
+      DB_APP_PASSWORD: ci-app-password
+      API_KEY_PEPPER: ci-pepper
+      # For the role bootstrap script, which runs as the superuser.
+      PGHOST: 127.0.0.1
+      PGPASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: medvora
+      # Fail, rather than skip, if the database is not reachable.
+      REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint and format
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy app scripts migrations tests
+
+      - name: Create database roles
+        run: sh deploy/postgres/init-roles.sh
+
+      - name: Migrations apply, match the models, and roll back
+        run: |
+          uv run alembic upgrade head
+          uv run alembic check
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+      - name: Tests
+        run: uv run pytest
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: docker build --tag medvora:ci .
