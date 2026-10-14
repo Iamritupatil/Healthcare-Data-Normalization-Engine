@@ -21,7 +21,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "bandit>=1.9.4",
     "mypy>=1.13",
+    "pip-audit>=2.10.1",
     "pytest>=8.3",
     "ruff>=0.8",
     "types-pyyaml>=6.0.12",
@@ -45,6 +47,13 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S105", "S106"]
 "scripts/**" = ["T201"]
+
+[tool.bandit]
+# The same two exceptions as ruff's S101 and S311 above. Every assert in the app only
+# narrows a type for mypy, after a real check (or in a handler registered for exactly
+# that exception type), so stripping it under `python -O` changes nothing. `random`
+# only generates synthetic test data.
+skips = ["B101", "B311"]
 
 [tool.mypy]
 python_version = "3.12"

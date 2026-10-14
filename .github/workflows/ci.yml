@@ -75,6 +75,25 @@ jobs:
       - name: Tests
         run: uv run pytest
 
+  security:
+    name: Security checks (bandit, pip-audit)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.5"
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # trivy is not installed on the runner, so the script reports it as skipped.
+      - name: Scan code and locked dependencies
+        run: uv run python -m scripts.security
+
   docker:
     name: Docker image builds
     runs-on: ubuntu-24.04
