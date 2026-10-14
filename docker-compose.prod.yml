@@ -1,0 +1,36 @@
+# The AWS demo server:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# Only Caddy publishes ports. The API and the database are reachable only inside the
+# Compose network.
+services:
+  api:
+    environment:
+      ENVIRONMENT: prod
+      # Caddy terminates TLS and forwards the client address.
+      FORWARDED_ALLOW_IPS: "*"
+    command:
+      ["uvicorn", "--factory", "app.main:create_app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log", "--proxy-headers"]
+
+  worker:
+    environment:
+      ENVIRONMENT: prod
+
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:
