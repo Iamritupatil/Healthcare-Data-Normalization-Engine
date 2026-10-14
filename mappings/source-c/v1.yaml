@@ -1,0 +1,31 @@
+source: source-c
+version: 1
+description: >
+  Legacy lab feed. Years of manual entry left mixed date formats, so a date that fits
+  both day-first and month-first is rejected as ambiguous. Sex uses ISO/IEC 5218 codes.
+timezone: America/Los_Angeles
+date_formats: ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y"]
+datetime_formats: ["%Y-%m-%d %H:%M"]
+name_order: family_given
+record_types:
+  Patient:
+    identifier_system: urn:medvora:source-c:hospital-number
+    source_record_id: [hospital_no]
+    fields:
+      hospital_no: { to: identifier }
+      full_name:   { to: name }
+      birth_date:  { to: birthDate }
+      sex_code:    { to: gender, codes: { "0": unknown, "1": male, "2": female } }
+      ssn:         { to: nationalId, system: "http://hl7.org/fhir/sid/us-ssn" }
+      tel:         { to: phone }
+      postcode:    { to: postalCode }
+  Observation:
+    identifier_system: urn:medvora:source-c:accession
+    source_record_id: [accession]
+    fields:
+      accession:   { to: identifier }
+      hospital_no: { to: subject }
+      loinc:       { to: code, codes: { "29463-7": body-weight, "8302-2": body-height, "2345-7": glucose, "14749-6": glucose, "8867-4": heart-rate } }
+      value:       { to: value }
+      unit:        { to: unit }
+      observed_at: { to: effectiveDateTime }

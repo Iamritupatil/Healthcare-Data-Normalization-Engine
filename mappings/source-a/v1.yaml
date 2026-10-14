@@ -1,0 +1,30 @@
+source: source-a
+version: 1
+description: Hospital EHR export. US conventions (month-first dates, pounds, mg/dL).
+timezone: America/New_York
+date_formats: ["%m/%d/%Y"]
+datetime_formats: ["%m/%d/%Y %H:%M"]
+name_order: given_family
+record_types:
+  Patient:
+    identifier_system: urn:medvora:source-a:mrn
+    source_record_id: [mrn]
+    fields:
+      mrn:          { to: identifier }
+      patient_name: { to: name }
+      dob:          { to: birthDate }
+      sex:          { to: gender, codes: { M: male, F: female, U: unknown } }
+      ssn:          { to: nationalId, system: "http://hl7.org/fhir/sid/us-ssn" }
+      phone:        { to: phone }
+      email:        { to: email }
+      zip:          { to: postalCode }
+  Observation:
+    identifier_system: urn:medvora:source-a:obs
+    source_record_id: [obs_id]
+    fields:
+      obs_id:   { to: identifier }
+      mrn:      { to: subject }
+      test:     { to: code, codes: { WT: body-weight, HT: body-height, GLU: glucose, HR: heart-rate } }
+      result:   { to: value }
+      units:    { to: unit }
+      taken_at: { to: effectiveDateTime }

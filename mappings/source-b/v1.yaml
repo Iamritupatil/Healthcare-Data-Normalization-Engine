@@ -1,0 +1,33 @@
+source: source-b
+version: 1
+description: >
+  Outpatient clinic system, exported with day-first dates and metric units. First and
+  last name arrive in separate columns. Carries the patient's insurance member number.
+timezone: America/Chicago
+date_formats: ["%d-%m-%Y"]
+datetime_formats: ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M"]
+name_order: given_family
+record_types:
+  Patient:
+    identifier_system: urn:medvora:source-b:patient-id
+    source_record_id: [patient_id]
+    fields:
+      patient_id:    { to: identifier }
+      first_name:    { to: name.given }
+      last_name:     { to: name.family }
+      date_of_birth: { to: birthDate }
+      gender:        { to: gender, codes: { Male: male, Female: female, Other: other, Unknown: unknown } }
+      member_id:     { to: insuranceMemberId, system: "urn:medvora:payer:blue-river" }
+      mobile:        { to: phone }
+      email:         { to: email }
+      pincode:       { to: postalCode }
+  Observation:
+    identifier_system: urn:medvora:source-b:result-id
+    source_record_id: [result_id]
+    fields:
+      result_id:    { to: identifier }
+      patient_id:   { to: subject }
+      test_code:    { to: code, codes: { BODYWT: body-weight, HEIGHT: body-height, FBS: glucose, PULSE: heart-rate } }
+      value:        { to: value }
+      uom:          { to: unit }
+      collected_at: { to: effectiveDateTime }
