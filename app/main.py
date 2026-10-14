@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from app.api.errors import register_error_handlers
 from app.api.limits import BodySizeLimitMiddleware, RateLimiter
@@ -13,10 +14,12 @@ from app.api.routes import (
     health,
     jobs,
     matches,
+    meta,
     metrics,
     patients,
     quarantine,
     records,
+    ui,
     uploads,
 )
 from app.config import Settings, get_settings
@@ -34,6 +37,7 @@ FHIR-like shape. Every input ends up either normalized or quarantined with reaso
 every normalized field can be traced back to its raw value and the rule that changed it.
 
 Authenticate with the `X-API-Key` header. Every error is an RFC 9457 problem document.
+A small dashboard for uploading files and reviewing results is served at [/](/).
 """
 
 # Room for multipart boundaries and form fields around a file at the size limit.
@@ -74,7 +78,21 @@ def create_app(
     # Added last, so it is outermost: even a 413 from the size limit carries a request id.
     app.add_middleware(RequestContextMiddleware)
 
-    routers = (health, records, patients, matches, uploads, jobs, quarantine, findings, metrics)
+    routers = (
+        health,
+        meta,
+        records,
+        patients,
+        matches,
+        uploads,
+        jobs,
+        quarantine,
+        findings,
+        metrics,
+        ui,
+    )
     for module in routers:
         app.include_router(module.router)
+    # The dashboard's script, styles and sample CSV files.
+    app.mount("/ui", StaticFiles(directory=ui.STATIC_DIR), name="ui")
     return app

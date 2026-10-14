@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Medvora</title>
+  <meta name="description" content="Upload patient and lab files, see how each value was normalized, and review uncertain matches.">
+  <link rel="icon" href="/ui/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/ui/app.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="masthead">
+    <a class="wordmark" href="#/overview">medvora</a>
+    <p class="who" id="who" hidden></p>
+    <div class="masthead-actions">
+      <a class="quiet-link" href="/docs">API docs</a>
+      <button type="button" class="button button-quiet" id="disconnect" hidden>Disconnect</button>
+    </div>
+  </header>
+
+  <div class="frame">
+    <nav class="tabs" id="tabs" aria-label="Sections" hidden>
+      <a href="#/overview" data-tab="overview" class="tab tab-overview">Overview</a>
+      <a href="#/upload" data-tab="upload" class="tab tab-upload">Upload a file</a>
+      <a href="#/try" data-tab="try" class="tab tab-try">Try one record</a>
+      <a href="#/quarantine" data-tab="quarantine" class="tab tab-quarantine">Quarantine</a>
+      <a href="#/review" data-tab="review" class="tab tab-review">Match review</a>
+      <a href="#/lookup" data-tab="lookup" class="tab tab-lookup">Look up a record</a>
+    </nav>
+    <main id="main" tabindex="-1">
+      <noscript><p class="note">The dashboard needs JavaScript. The API itself is at <a href="/docs">/docs</a>.</p></noscript>
+    </main>
+  </div>
+  <p class="toast" id="toast" role="status" aria-live="polite" hidden></p>
+</body>
+</html>

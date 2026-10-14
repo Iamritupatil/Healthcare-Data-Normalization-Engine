@@ -7,3 +7,10 @@ services:
   api:
     ports:
       - "127.0.0.1:8000:8000"
+    volumes:
+      # Dashboard edits show up on a browser refresh, without rebuilding the image.
+      - ./app/static:/srv/medvora/app/static:ro
+    environment:
+      # Generous limits for trying things out in the dashboard; production keeps the defaults.
+      RATE_LIMIT_UPLOADS_PER_HOUR: "200"
+      RATE_LIMIT_RECORDS_PER_MINUTE: "600"
