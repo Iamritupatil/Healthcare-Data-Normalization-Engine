@@ -1,8 +1,9 @@
 """Choosing the match verifier (MATCH_VERIFIER=rule|llm), and the optional LLM verifier.
 
 The LLM verifier is off by default. It is sent comparison facts only, which hold field
-outcomes such as "agree" or "missing" and never names, dates or identifiers. Its answer
-is constrained to the Verdict JSON schema, and anything unexpected (a refusal, a cut-off
+outcomes such as "agree" or "missing" and never names, dates or identifiers. Only the
+configured model receives them: there is no fallback to another model. Its answer is
+constrained to the Verdict JSON schema, and anything unexpected (a refusal, a cut-off
 reply, a network error) raises, which verify_safely turns into "unsure", i.e. review.
 """
 
@@ -53,7 +54,7 @@ class LlmVerifier:
         self.version = model
 
     def verify(self, facts: ComparisonFacts) -> Verdict:
-        response = self._client.beta.messages.create(
+        response = self._client.messages.create(
             model=self._model,
             max_tokens=2048,
             system=SYSTEM_PROMPT,
@@ -62,9 +63,6 @@ class LlmVerifier:
                 "effort": "low",
                 "format": {"type": "json_schema", "schema": VERDICT_SCHEMA},
             },
-            # A declined request is re-run on Anthropic's recommended fallback model.
-            betas=["server-side-fallback-2026-07-01"],
-            fallbacks="default",
         )
         if response.stop_reason != "end_turn":
             raise RuntimeError(f"verifier stopped with {response.stop_reason}")

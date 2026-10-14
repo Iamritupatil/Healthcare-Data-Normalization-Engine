@@ -17,7 +17,6 @@ DB_APP_ROLE = "medvora_app"
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    environment: Literal["local", "test", "prod"] = "local"
     log_level: str = "INFO"
 
     db_host: str = "127.0.0.1"
@@ -55,7 +54,8 @@ class Settings(BaseSettings):
     # The last check before an automatic match; it can only veto. "llm" is optional.
     match_verifier: Literal["rule", "llm"] = "rule"
     match_verifier_timeout_seconds: float = 20.0
-    match_verifier_model: str = "claude-opus-5-5"
+    # About a dozen categorical facts in, one of three verdicts out: a small model suffices.
+    match_verifier_model: str = "claude-haiku-5-5"
     anthropic_api_key: SecretStr | None = None
 
     @property

@@ -186,21 +186,24 @@ class TestLlmVerifier:
             block = SimpleNamespace(type="text", text=text)
             return SimpleNamespace(stop_reason=stop_reason, content=[block])
 
-        client = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(create=create)))
+        client = SimpleNamespace(messages=SimpleNamespace(create=create))
         return client, calls
 
     def test_sends_only_comparison_facts_and_parses_the_verdict(self):
         client, calls = self._client(
             '{"verdict": "disagree", "contradictions": ["gender"], "fields_used": ["gender"]}'
         )
-        verdict = LlmVerifier(client, "claude-opus-5-5").verify(AGREE_ALL)  # type: ignore[arg-type]
+        verdict = LlmVerifier(client, "claude-haiku-5-5").verify(AGREE_ALL)  # type: ignore[arg-type]
         assert verdict.verdict == "disagree"
         (call,) = calls
         assert call["messages"][0]["content"] == AGREE_ALL.model_dump_json()
         assert call["output_config"]["format"]["schema"] == VERDICT_SCHEMA
-        assert call["fallbacks"] == "default"
+        # Exactly the configured model sees the facts: no fallback to another one.
+        assert call["model"] == "claude-haiku-5-5"
+        assert "fallbacks" not in call
+        assert "betas" not in call
 
     def test_a_refusal_or_cut_off_reply_fails_closed(self):
         client, _ = self._client("", stop_reason="refusal")
-        result = verify_safely(LlmVerifier(client, "claude-opus-5-5"), AGREE_ALL, timeout=1)  # type: ignore[arg-type]
+        result = verify_safely(LlmVerifier(client, "claude-haiku-5-5"), AGREE_ALL, timeout=1)  # type: ignore[arg-type]
         assert result.verdict.verdict == "unsure"
