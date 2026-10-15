@@ -2,42 +2,58 @@
 
 A service that accepts patient records from different healthcare systems, converts them into one standard FHIR-based format, and keeps a complete, traceable history of every change, without ever silently dropping or altering clinical data.
 
+**Author:** Ritu Patil
+
 ## The problem I chose
 
 **Problem 1: Healthcare Data Integration & Normalization Engine.**
 
 Hospitals, clinics and labs send patient data in different shapes, with different field names, date formats, units and codes. This service accepts those records through an API or file upload and converts them into one standard format based on FHIR. It validates them, flags duplicates and conflicting values, and keeps both the original data and a record of every change, so any normalized value can be traced back to its source. Invalid records are quarantined, never dropped, and can be reprocessed once fixed.
 
-I chose this problem because I had built SynthFix, a tool that cleans machine-learning datasets. This project showed me the key difference: in an ML dataset you can drop or overwrite a bad value, but in healthcare a silently "fixed" value can reach a doctor. That idea shaped the whole design. The full reasoning is in [the system design document](docs/system-design.md#1-the-problem-and-why-i-chose-it).
+I chose this problem because I had built SynthFix, a tool that cleans machine-learning datasets. This project showed me the key difference: in an ML dataset you can drop or overwrite a bad value, but in healthcare a silently "fixed" value can reach a doctor. That idea shaped the whole design.
 
-## What it does
+## Features
 
-- **Accepts** single records (JSON) and file uploads (CSV or JSON), from three synthetic sources that each format data differently.
-- **Normalizes** field names, dates (only in declared formats; ambiguous dates are never guessed), time zones (to UTC), units (exact decimal math with versioned conversion rules) and codes, into FHIR-lite `Patient` and `Observation` records.
-- **Validates** every record against a declared schema. Failures go to a quarantine with reason codes and can be reprocessed later.
-- **Keeps everything:** the raw payload exactly as received, every version of a record, and a log entry for every changed field, recording the rule and rule version used.
-- **Finds duplicates and conflicts:** repeated requests, corrected records (stored as new versions), the same measurement from two sources, and the same patient across systems. Patient matching never merges two people on name and birth date alone. An automatic match needs a strong identifier and must pass a final verifier that can only veto.
-- **Isolates organizations** with forced Postgres row-level security and separate database roles.
-- **Runs uploads in the background** with per-row isolation, retries, crash recovery and progress tracking.
-- **Includes** a console UI, structured logs with request ids, rate limits, an audit log, automated tests (including security tests) and an evaluation script.
+- **Ingest** single records (JSON) or file uploads (CSV or JSON) from three synthetic sources that each format data differently.
+- **Normalize** field names, dates, time zones, units and codes into FHIR-lite `Patient` and `Observation` records. Ambiguous dates are quarantined, never guessed.
+- **Validate** every record against a declared schema; failures go to a quarantine with reason codes and can be reprocessed.
+- **Keep full history:** the raw payload as received, every version of a record, and a log entry for every changed field.
+- **Detect duplicates and conflicts**, including the same patient across systems. Two people are never merged on name and birth date alone.
+- **Isolate organizations** with forced Postgres row-level security.
+- **Process uploads in the background** with retries, crash recovery and progress tracking.
+- **Console UI**, structured logs, rate limits, an audit log, automated tests and an evaluation script.
 
-## Documentation
+## Design documents
 
-| Document | Contents |
-| --- | --- |
-| [System design](docs/system-design.md) | Architecture, processing, data model, API, matching, failure handling, storage, scalability, multi-tenancy, security, evaluation |
-| [Tradeoff analysis](docs/tradeoffs.md) | Latency vs reliability, cost vs quality, simplicity vs scalability, build vs buy, MVP priorities, key assumptions |
+The design is documented separately, in two PDFs submitted with this repository:
+
+- **System Design** (`system-design.pdf`): architecture, processing, data model, API, matching, failure handling, storage, scalability, multi-tenancy, security and evaluation.
+- **Tradeoff Analysis** (`tradeoffs.pdf`): latency vs reliability, cost vs quality, simplicity vs scalability, build vs buy, MVP priorities and key assumptions.
+
+## Tech stack
+
+Python 3.12, FastAPI, Pydantic, PostgreSQL, SQLAlchemy, Alembic, Docker Compose, pytest.
 
 ## Quick start
 
-Requirements: Docker with Compose.
+Requirements: Docker with Compose. To run the scripts and tests on your machine, also install [uv](https://docs.astral.sh/uv/).
+
+**bash (macOS / Linux):**
 
 ```bash
 cp .env.example .env
 docker compose up -d --build
 ```
 
+**PowerShell (Windows):**
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d --build
+```
+
 Then open:
+
 - **Console UI:** http://localhost:8000/
 - **Interactive API docs:** http://localhost:8000/docs
 
@@ -47,93 +63,133 @@ Run the guided demo, which walks through every feature in about two minutes:
 docker compose run --rm tools python -m scripts.demo
 ```
 
-<!-- MERGE: insert here, verbatim from the current README, the tested setup details:
-     the PowerShell equivalent of the commands above, how to install uv, how to seed
-     the demo org and save the keys to .demo.env, and how to load them in bash and PowerShell. -->
+Create a demo organization and API keys:
+
+```bash
+docker compose run --rm tools python -m scripts.seed
+```
+
+To stop everything: `docker compose down`. To also delete the database: `docker compose down -v`.
 
 ## Using the API
 
-Every request needs an `X-API-Key` header. The key determines the organization and role (`ingest`, `reader` or `admin`).
+Every request needs an `X-API-Key` header. The key decides the organization and the role (`ingest`, `reader` or `admin`). The full list of endpoints, with a "Try it out" button for each, is at http://localhost:8000/docs.
 
-<!-- MERGE: insert here, verbatim from the current README, the tested API examples
-     in both bash and PowerShell: ingest a record, a quarantined record, a file upload
-     and job status, lineage, and reprocessing. -->
+**bash:**
 
-Errors follow RFC 9457 ("Problem Details"): every error has the same JSON shape and includes the request id. Lists use cursor pagination. The full endpoint list is in [the API design section](docs/system-design.md#7-api-design).
+```bash
+export API_KEY="<admin key>"
+curl -s http://localhost:8000/v1/me -H "X-API-Key: $API_KEY"
+curl -s "http://localhost:8000/v1/quarantine?limit=10" -H "X-API-Key: $API_KEY"
+curl -s http://localhost:8000/v1/records/<record-id>/lineage -H "X-API-Key: $API_KEY"
+```
+
+**PowerShell:**
+
+```powershell
+$h = @{ "X-API-Key" = "<admin key>" }
+Invoke-RestMethod http://localhost:8000/v1/me -Headers $h
+Invoke-RestMethod "http://localhost:8000/v1/quarantine?limit=10" -Headers $h
+Invoke-RestMethod http://localhost:8000/v1/records/<record-id>/lineage -Headers $h
+```
+
+Main endpoints:
+
+| Endpoint | Purpose |
+| --- | --- |
+| `POST /v1/records` | Ingest one record |
+| `POST /v1/validate` | Check a record without storing it |
+| `POST /v1/uploads` | Upload a CSV or JSON file; returns a job id |
+| `GET /v1/jobs/{id}` | Upload progress |
+| `GET /v1/records/{id}/lineage` | A record's raw payload and every change made to it |
+| `GET /v1/quarantine` | Records that failed, with reasons |
+| `POST /v1/quarantine/reprocess` | Re-run quarantined records with the current rules |
+| `GET /v1/matches?status=review` | Patient matches waiting for a person to decide |
+| `GET /v1/findings` | Conflicts and warnings |
+
+Errors follow RFC 9457 ("Problem Details"), so every error has the same JSON shape and includes a request id.
 
 ## Console UI
 
-The console at http://localhost:8000/ lets you try a single record, upload a file and watch the job, browse quarantine, review candidate matches, and look up any record with its full lineage. Paste an API key to connect; it is kept only for the browser session.
+The console at http://localhost:8000/ lets you try a single record, upload a file and watch the job, browse quarantine, review candidate patient matches, and look up any record with its full history. Paste an API key to connect; it is kept only for the browser session.
 
 ## Tests and checks
 
-<!-- MERGE: insert here, verbatim from the current README, the tested commands for:
-     the test suite, lint/format/type checks, migration check, browser tests
-     (Chromium install first), the smoke script, and scripts/security.py. -->
+```bash
+uv sync
+uv run pytest                      # unit and integration tests (needs the Docker stack running)
+uv run ruff check .                # lint
+uv run mypy .                      # type checks
+uv run alembic check               # migrations match the models
+uv run python -m scripts.security  # code and dependency security scans
+```
 
-CI runs lint, type checks, the migration check, the full test suite and the security checks on every push.
+Browser tests (install Chromium first):
+
+```bash
+uv run playwright install chromium
+uv run pytest tests/e2e
+```
+
+CI runs lint, type checks, the migration check, the test suite and the security checks on every push.
 
 ## Evaluation
 
-`uv run python -m scripts.evaluate` generates 500 synthetic patients with known truth (including deliberate errors and namesakes), runs them through the real pipeline, and measures the results:
+```bash
+uv run python -m scripts.evaluate
+```
+
+Runs 500 synthetic people (938 patient records across the three sources, 2,839 rows with observations) through the real pipeline, with deliberate errors and namesakes mixed in:
 
 | Measure | Result |
 | --- | --- |
-| Data loss | None: 2,839 rows in = 2,809 normalized + 30 quarantined |
+| Data loss | None: all 2,839 rows ended as normalized (2,809) or quarantined (30) |
 | Normalization accuracy | 100% for birth date, sex, weight, glucose and height; 99.4% for family name |
 | Matching precision | 100%: 453 automatic matches, 0 wrong |
 | Matching recall | 88.8% automatic; 100% including pairs sent to human review |
 | Namesakes merged | 0 of 10 |
 
-The same code generated and evaluated this data, so real-world numbers would be lower; the evaluation shows the logic works as designed. See [the evaluation section](docs/system-design.md#16-evaluation).
+The same code generated and evaluated this data, so real-world numbers would be lower.
 
 ## Project structure
 
 ```text
 app/
-  api/            HTTP routes, auth, limits, RFC 9457 errors
-  pipeline/       pure functions: mapping, normalization, validation, match scoring
-  services/       storage and orchestration: ingest, versions, quarantine, matching, audit
-  jobs/           background job runner and polling worker
-  models/         canonical (FHIR-lite) models and database tables
-  observability/  structured logging and request ids
+  api/            HTTP routes, auth, limits, errors
+  pipeline/       mapping, normalization, validation, match scoring (no database code)
+  services/       storage: ingest, versions, quarantine, matching, audit
+  jobs/           background job worker
+  models/         canonical models and database tables
+  observability/  logging and request ids
   static/         console UI
 mappings/         one YAML mapping per source
-migrations/       Alembic migrations, including row-level security
-scripts/          demo, synthetic data generator, evaluation, security checks
+migrations/       database migrations
+scripts/          demo, seed, data generator, evaluation, security checks
 tests/            unit, integration and browser tests
-deploy/           Postgres roles and the Caddy HTTPS proxy
-docs/             system design and tradeoff analysis
+deploy/           database roles and HTTPS proxy config
 ```
 
 ## Assumptions
 
-- Sources send structured CSV or JSON and can declare their date formats, time zone and codes in a mapping file.
+- Sources send structured CSV or JSON and declare their date formats, time zone and codes in a mapping file.
 - Each source gives its records a stable id, so corrections are recognized as new versions.
 - Data volume per organization is moderate (up to low millions of records).
-- Each organization has someone to review uncertain matches and quarantined records.
-- Organizations never share patients through this system.
+- Someone at each organization reviews uncertain matches and quarantined records.
 - All data is synthetic.
 
 ## Limitations
 
-- Identifiers (national ids, member numbers) are stored in plain text, protected by encryption at rest, row-level security and access control, but not by field-level encryption.
-- Conflicts and warnings are recorded but have no "resolved" workflow yet.
-- Rate limits are kept in process memory, so several API instances would each count separately; failed authentication attempts are not rate-limited.
+- Identifiers such as national ids are stored in plain text, protected by encryption at rest and access control, but not by field-level encryption.
+- Conflicts and warnings are recorded but can't be marked as resolved yet.
+- Rate limits are kept in memory, so they don't work across several API instances.
 - Matching weights are set by hand, not learned from labelled data.
-- Out of scope: streaming ingest, HL7v2 and FHIR input, blood pressure, error tracking.
+- Not built: streaming ingest, HL7v2 and FHIR input, blood pressure, error tracking.
 
 ## Possible improvements
 
-1. Field-level encryption or tokenization for identifiers.
-2. A resolution workflow for conflicts, and rules for choosing which value to show.
+1. Field-level encryption for identifiers.
+2. A workflow to resolve conflicts and choose which value to show.
 3. Matching weights learned from labelled data.
 4. Error tracking and alerting.
-5. HL7v2 and FHIR input adapters.
-6. Streaming ingest, and SQS for background jobs.
-
-Details and reasoning: [system design, section 18](docs/system-design.md#18-assumptions-limitations-and-future-work).
-
-## Author
-
-Ritu Patil
+5. HL7v2 and FHIR input.
+6. Streaming ingest, and a managed queue for background jobs.
