@@ -185,7 +185,7 @@ deploy/           database roles and HTTPS proxy config
 - Matching weights are set by hand, not learned from labelled data.
 - Not built: streaming ingest, HL7v2 and FHIR input, blood pressure, error tracking.
 
-## Possible improvements
+## Possible improvements (with more time)
 
 1. Field-level encryption for identifiers.
 2. A workflow to resolve conflicts and choose which value to show.
