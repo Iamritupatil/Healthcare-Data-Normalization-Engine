@@ -1,448 +1,139 @@
-# Medvora
+# Healthcare Data Normalization Engine
 
-A healthcare record normalization engine. Hospitals send patients and lab results in
-their own formats (month-first or day-first dates, pounds or kilograms, `M`/`F` or
-`1`/`2`, "Robert Miller" or "MILLER, Robert"). Medvora turns every record into one
-canonical, FHIR-like shape, quarantines what it cannot trust (with the reasons), traces
-every value back to what was received, and links records that describe the same patient
-without ever merging two different people.
+A service that accepts patient records from different healthcare systems, converts them into one standard FHIR-based format, and keeps a complete, traceable history of every change, without ever silently dropping or altering clinical data.
 
-```text
-            ┌──────────┐   ┌─────────┐   ┌───────────┐   ┌──────────┐   ┌─────────────┐
- record ──▶ │ 1 ingest │──▶│ 2 map   │──▶│ 3 normal- │──▶│ 4 valid- │──▶│ 6 store     │
- or CSV     │ raw +    │   │ YAML per│   │ ize dates,│   │ ate      │   │ + lineage   │
-            │ hash     │   │ source  │   │ units,... │   │ Pydantic │   └──────┬──────┘
-            └──────────┘   └─────────┘   └───────────┘   └────┬─────┘          │ patients
-                 │ seen before? return                         │ fails          ▼
-                 └─ the earlier result                         ▼          ┌─────────────┐
-                                                        quarantine with   │ 5 match +   │
-                                                        reason codes      │ verify (veto│
-                                                                          │ only) ──▶ review queue
-                                                                          └─────────────┘
-```
+## The problem I chose
+
+**Problem 1: Healthcare Data Integration & Normalization Engine.**
+
+Hospitals, clinics and labs send patient data in different shapes, with different field names, date formats, units and codes. This service accepts those records through an API or file upload and converts them into one standard format based on FHIR. It validates them, flags duplicates and conflicting values, and keeps both the original data and a record of every change, so any normalized value can be traced back to its source. Invalid records are quarantined, never dropped, and can be reprocessed once fixed.
+
+I chose this problem because I had built SynthFix, a tool that cleans machine-learning datasets. This project showed me the key difference: in an ML dataset you can drop or overwrite a bad value, but in healthcare a silently "fixed" value can reach a doctor. That idea shaped the whole design. The full reasoning is in [the system design document](docs/system-design.md#1-the-problem-and-why-i-chose-it).
+
+## What it does
+
+- **Accepts** single records (JSON) and file uploads (CSV or JSON), from three synthetic sources that each format data differently.
+- **Normalizes** field names, dates (only in declared formats; ambiguous dates are never guessed), time zones (to UTC), units (exact decimal math with versioned conversion rules) and codes, into FHIR-lite `Patient` and `Observation` records.
+- **Validates** every record against a declared schema. Failures go to a quarantine with reason codes and can be reprocessed later.
+- **Keeps everything:** the raw payload exactly as received, every version of a record, and a log entry for every changed field, recording the rule and rule version used.
+- **Finds duplicates and conflicts:** repeated requests, corrected records (stored as new versions), the same measurement from two sources, and the same patient across systems. Patient matching never merges two people on name and birth date alone. An automatic match needs a strong identifier and must pass a final verifier that can only veto.
+- **Isolates organizations** with forced Postgres row-level security and separate database roles.
+- **Runs uploads in the background** with per-row isolation, retries, crash recovery and progress tracking.
+- **Includes** a console UI, structured logs with request ids, rate limits, an audit log, automated tests (including security tests) and an evaluation script.
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [System design](docs/system-design.md) | Architecture, processing, data model, API, matching, failure handling, storage, scalability, multi-tenancy, security, evaluation |
+| [Tradeoff analysis](docs/tradeoffs.md) | Latency vs reliability, cost vs quality, simplicity vs scalability, build vs buy, MVP priorities, key assumptions |
 
 ## Quick start
 
-Requires Docker with Compose. Shell commands are written for bash (macOS, Linux, or Git
-Bash and WSL on Windows); where Windows PowerShell needs something different, a
-PowerShell version follows. These three work as written in both:
+Requirements: Docker with Compose.
 
 ```bash
-cp .env.example .env        # then replace every change-me value (see the comment at the top)
-docker compose up -d        # Postgres, migrations, API on http://localhost:8000, worker
+cp .env.example .env
+docker compose up -d --build
+```
+
+Then open:
+- **Console UI:** http://localhost:8000/
+- **Interactive API docs:** http://localhost:8000/docs
+
+Run the guided demo, which walks through every feature in about two minutes:
+
+```bash
 docker compose run --rm tools python -m scripts.demo
 ```
 
-Compose names the containers and the database volume after the folder, so a second
-checkout in a differently named folder gets its own database (or set
-`COMPOSE_PROJECT_NAME`).
+<!-- MERGE: insert here, verbatim from the current README, the tested setup details:
+     the PowerShell equivalent of the commands above, how to install uv, how to seed
+     the demo org and save the keys to .demo.env, and how to load them in bash and PowerShell. -->
 
-The demo creates two fresh organisations and walks through every feature in about two
-minutes: ingest, idempotency, matching across sources, conflicts, namesakes, the review
-queue, quarantine and correction, unit and time-zone conversion, duplicate measurements,
-lineage, a CSV upload, cursor paging, org isolation, roles and metrics.
+## Using the API
 
-Open the dashboard at <http://localhost:8000> and paste an API key: upload CSV files
-(sample files are linked on the page) and follow the job, try a single record with or
-without saving it, browse the quarantine, decide candidate matches, and look up any
-record beside exactly what its source sent. Interactive API docs are at
-<http://localhost:8000/docs> (use **Authorize** with an API key).
+Every request needs an `X-API-Key` header. The key determines the organization and role (`ingest`, `reader` or `admin`).
 
-To get keys for your own calls, create an organisation, save its keys to `.demo.env`
-(git-ignored; each key is shown only once) and load them into your shell. The examples
-below use `MEDVORA_INGEST_KEY`, `MEDVORA_READER_KEY` and `MEDVORA_ADMIN_KEY`.
+<!-- MERGE: insert here, verbatim from the current README, the tested API examples
+     in both bash and PowerShell: ingest a record, a quarantined record, a file upload
+     and job status, lineage, and reprocessing. -->
 
-```bash
-docker compose run --rm -T tools python -m scripts.seed --name "My Hospital Network" > .demo.env
-set -a; . ./.demo.env; set +a
-```
+Errors follow RFC 9457 ("Problem Details"): every error has the same JSON shape and includes the request id. Lists use cursor pagination. The full endpoint list is in [the API design section](docs/system-design.md#7-api-design).
 
-PowerShell:
+## Console UI
 
-```powershell
-docker compose run --rm -T tools python -m scripts.seed --name "My Hospital Network" | Out-File -Encoding ascii .demo.env
-Get-Content .demo.env | Where-Object { $_ -match '^MEDVORA_' } | ForEach-Object { $name, $value = $_ -split '=', 2; Set-Item "env:$name" $value }
-```
+The console at http://localhost:8000/ lets you try a single record, upload a file and watch the job, browse quarantine, review candidate matches, and look up any record with its full lineage. Paste an API key to connect; it is kept only for the browser session.
 
-## API
+## Tests and checks
 
-Every request sends `X-API-Key`. `X-Request-ID` is optional; one is generated if missing,
-and it is always returned and written on every log line. Every error is an
-[RFC 9457](https://www.rfc-editor.org/rfc/rfc9457) problem document
-(`application/problem+json`) with a `request_id`.
+<!-- MERGE: insert here, verbatim from the current README, the tested commands for:
+     the test suite, lint/format/type checks, migration check, browser tests
+     (Chromium install first), the smoke script, and scripts/security.py. -->
 
-| Method | Path | Role | Returns |
-| --- | --- | --- | --- |
-| `GET` | `/health`, `/health/ready` | none | Process up; `ready` also checks the database |
-| `GET` | `/v1/me` | any | The organisation and role behind the key |
-| `GET` | `/v1/sources` | any | Known sources, their active mapping version and the columns they send |
-| `POST` | `/v1/records` | ingest | `201` stored, `200` already received (or a measurement already stored from another source), `422` quarantined |
-| `POST` | `/v1/validate` | ingest | Dry run: the canonical record or the errors; stores nothing |
-| `POST` | `/v1/uploads` | ingest | `202` with a job; `413` over 20 MB or 100,000 rows |
-| `GET` | `/v1/jobs/{id}` | ingest, reader | Progress: total, processed, normalized, failed, duplicate rows |
-| `GET` | `/v1/records/{id}` | reader | The canonical record, and whether it is the current version |
-| `GET` | `/v1/records/{id}/lineage` | reader | Raw payload, every transformation with its rule version, mapping version |
-| `GET` | `/v1/records/{id}/versions` | reader | All versions of the same source record |
-| `GET` | `/v1/patients/{id}/matches` | reader | Match group, candidate links with scores and facts, open conflicts |
-| `GET` | `/v1/matches?status=review` | reader | Candidate pairs waiting for a human |
-| `POST` | `/v1/matches/{id}/decision` | admin | A reviewer's `same` / `different` decision (audited) |
-| `GET` | `/v1/quarantine` | reader | Filter by `source`, `reason_code`, `status`, `source_record_id` |
-| `GET` | `/v1/quarantine/{id}` | reader | One quarantined record |
-| `POST` | `/v1/quarantine/reprocess` | admin | Re-run open items (by ids or filter) with the current mapping; returns a job |
-| `GET` | `/v1/findings` | reader | Conflicts and warnings (namesakes, duplicate measurements, ...) |
-| `GET` | `/metrics` | admin | Counts by source and status for your organisation |
-
-Lists are cursor-paginated: `?limit=` (default 50, max 200) and `?cursor=` from the
-previous page's `next_cursor`, which is `null` on the last page.
-
-**Roles.** `ingest` keys belong to sending systems and cannot read patient data back;
-`reader` keys read; `admin` keys do both and also reprocess and decide matches. Another
-organisation's ids return `404`, never `403`, so ids do not leak.
-
-### Examples
-
-```bash
-API=http://localhost:8000
-
-# Ingest a patient from source A
-curl -s $API/v1/records -H "X-API-Key: $MEDVORA_INGEST_KEY" -H "Content-Type: application/json" -d '{
-  "source": "source-a", "record_type": "Patient",
-  "payload": {"mrn": "0012345", "patient_name": "ROBERT MILLER", "dob": "03/07/1984",
-              "sex": "M", "phone": "(555) 201-3344", "zip": "10001"}}'
-
-# A record that cannot be trusted: 422 with every reason, and it is kept in quarantine
-curl -s $API/v1/records -H "X-API-Key: $MEDVORA_INGEST_KEY" -H "Content-Type: application/json" -d '{
-  "source": "source-c", "record_type": "Patient",
-  "payload": {"hospital_no": "C1", "full_name": "OKAFOR, Amara", "birth_date": "03/04/1985", "sex_code": "9"}}'
-
-# Upload a CSV and poll the job
-uv run python -m scripts.generate_data --patients 300 --bad 5 --out data
-curl -s $API/v1/uploads -H "X-API-Key: $MEDVORA_INGEST_KEY" \
-  -F file=@data/source-a-patients.csv -F source=source-a -F record_type=Patient
-curl -s $API/v1/jobs/<job id> -H "X-API-Key: $MEDVORA_INGEST_KEY"
-
-# Where did this value come from?
-curl -s $API/v1/records/<record id>/lineage -H "X-API-Key: $MEDVORA_READER_KEY"
-
-# Fix a mapping (new version file), restart api and worker, then re-run what failed
-curl -s $API/v1/quarantine/reprocess -H "X-API-Key: $MEDVORA_ADMIN_KEY" \
-  -H "Content-Type: application/json" -d '{"reason_code": "CODE_UNMAPPED"}'
-```
-
-`uv run` uses the project's Python 3.12 (install uv from
-<https://docs.astral.sh/uv/getting-started/installation/>). Without it, upload one of the
-sample files instead: `app/static/samples/source-a-patients.csv`.
-
-PowerShell (Windows PowerShell 5.1 and later). There, `curl` is another name for
-`Invoke-WebRequest`, so the upload calls `curl.exe`, which ships with Windows:
-
-```powershell
-$API = "http://localhost:8000"
-$ingest = @{ "X-API-Key" = $env:MEDVORA_INGEST_KEY }
-
-# Ingest a patient from source A
-$patient = @{ source = "source-a"; record_type = "Patient"; payload = @{
-    mrn = "0012345"; patient_name = "ROBERT MILLER"; dob = "03/07/1984"
-    sex = "M"; phone = "(555) 201-3344"; zip = "10001" } }
-Invoke-RestMethod "$API/v1/records" -Method Post -Headers $ingest -ContentType "application/json" `
-  -Body ($patient | ConvertTo-Json) | ConvertTo-Json -Depth 10
-
-# A record that cannot be trusted: 422 with every reason. PowerShell raises on a 4xx;
-# the problem document is in the error.
-$bad = @{ source = "source-c"; record_type = "Patient"; payload = @{
-    hospital_no = "C1"; full_name = "OKAFOR, Amara"; birth_date = "03/04/1985"; sex_code = "9" } }
-try { Invoke-RestMethod "$API/v1/records" -Method Post -Headers $ingest -ContentType "application/json" -Body ($bad | ConvertTo-Json) }
-catch { $_.ErrorDetails.Message }
-
-# Upload a CSV and poll the job
-uv run python -m scripts.generate_data --patients 300 --bad 5 --out data
-$job = curl.exe -s "$API/v1/uploads" -H "X-API-Key: $env:MEDVORA_INGEST_KEY" `
-  -F file=@data/source-a-patients.csv -F source=source-a -F record_type=Patient | ConvertFrom-Json
-Invoke-RestMethod "$API/v1/jobs/$($job.id)" -Headers $ingest
-
-# Where did this value come from?
-Invoke-RestMethod "$API/v1/records/<record id>/lineage" `
-  -Headers @{ "X-API-Key" = $env:MEDVORA_READER_KEY } | ConvertTo-Json -Depth 10
-
-# Fix a mapping (new version file), restart api and worker, then re-run what failed
-Invoke-RestMethod "$API/v1/quarantine/reprocess" -Method Post -Headers @{ "X-API-Key" = $env:MEDVORA_ADMIN_KEY } `
-  -ContentType "application/json" -Body '{"reason_code": "CODE_UNMAPPED"}'
-```
-
-## How it works, and why
-
-### Organisation isolation is enforced by Postgres
-
-Every table carries `org_id` and has a row-level security policy, with `FORCE ROW LEVEL
-SECURITY` so even the table owner is filtered. Three database roles keep it honest:
-
-| Role | Logs in | Can |
-| --- | --- | --- |
-| `medvora_owner` | migrations, seed | Owns the schema. Still filtered by RLS. |
-| `medvora_app` | API and worker | Only the grants it needs. Not the owner, no `BYPASSRLS`. Cannot update or delete raw records, canonical records or the audit log. |
-| `medvora_system` | never | Owns the two `SECURITY DEFINER` functions that must see across orgs: API-key lookup (the org is unknown until the key is checked) and job claiming (workers serve every org). |
-
-The org is set per transaction with `set_config('app.org_id', ..., true)`, the
-transaction-local form of `SET LOCAL`, so a pooled connection cannot carry one org's id
-into the next request. With no org set, every policy matches nothing. The API and worker
-containers never receive the owner password. Tests prove each of these against a real
-database.
-
-### Nothing is lost, everything is traceable
-
-- **Raw first.** Every payload is stored as received (append-only) before anything else.
-- **Idempotent.** A SHA-256 of the canonical JSON of source, type and payload is unique
-  per org. Re-sending returns the earlier result; key order and whitespace do not matter.
-- **Versions.** Each record has a `source_record_id` (for example the MRN). Same id with
-  new content is a new version, kept beside the old one; the latest received is current.
-  A good new version settles older quarantined versions (`superseded`).
-- **Lineage.** Every normalized field logs source field, original value, result, rule
-  name and rule version, plus the mapping version that ran.
-- **Quarantine.** Failures keep every reason (`DATE_AMBIGUOUS`, `UNIT_UNKNOWN`, ...) with
-  the canonical field and the source column. Reprocessing re-runs from the raw payload
-  with the current mapping.
-- **Accounting.** Per source, `ingested = normalized + duplicate_records +
-  quarantine.open + quarantine.superseded` (see `/metrics`).
-
-### Normalization rules
-
-Mapping files (`mappings/<source>/v<N>.yaml`) are validated at startup, so a typo stops
-the app instead of corrupting data. They are never edited in place: a fix is a new version.
-
-| Value | Rule |
-| --- | --- |
-| Dates | Parsed only with the source's declared formats. A value that fits two declared formats differently (03/04/1985 as d/m and m/d) is `DATE_AMBIGUOUS`. Before 1900 or in the future is rejected. Birth dates are never shifted through a time zone. |
-| Timestamps | Read in the source's declared zone (an explicit offset wins) and stored in UTC. Local times that do not exist or occur twice because of daylight saving are rejected, not guessed. |
-| Numbers | `Decimal` end to end, including JSON parsing, storage (JSONB numeric) and responses: `70.10` stays `70.10`. Values already in the canonical unit keep the sender's precision; converted values are rounded once to a declared step. |
-| Units | UCUM codes. Conversion factors are versioned rules (lb→kg × 0.45359237, glucose mg/dL→mmol/L ÷ 18.016). Glucose in mmol/L uses LOINC 14749-6, the substance-concentration code that matches the unit. |
-| Names | Unicode NFC, whitespace collapsed, ALL-CAPS title-cased, split by the source's declared order. Anything risky to split is kept as `name.text` with a warning. |
-| Identifiers | Always strings; leading zeros survive. National ids and member numbers are compared without separators, and only within the same issuing system. |
-
-### Matching is cautious by design
-
-Merging two different people's histories is worse than leaving a duplicate. So:
-
-1. **Blocking.** Only records sharing a birth year or a family-name prefix are compared.
-2. **Comparison facts.** Each pair becomes per-field outcomes (`agree`, `disagree`,
-   `missing`, `swapped`, `nickname`, ...). Facts contain no patient data.
-3. **Scoring.** Agreement adds points and disagreement subtracts. Missing adds nothing,
-   because hospitals collect different fields. Names common in the org count for less.
-4. **Strong-identifier rule.** A pair can only head for an automatic match if it agrees
-   on a national id, insurance member number, phone or email, and no name disagrees
-   (twins share a surname, birth date, phone and address). Everything else that scores
-   high enough waits for a human.
-5. **Veto-only verifier.** Pairs that pass go to a background verifier that can confirm or
-   send to review, never promote. The default `RuleVerifier` vetoes on a different middle
-   initial, postal code or sex. An optional LLM verifier receives only the comparison
-   facts, never patient data. It is off by default; to turn it on, set `MATCH_VERIFIER=llm`
-   and `ANTHROPIC_API_KEY` in `.env` and run `docker compose up -d worker` (only the
-   worker receives the key). It calls `claude-haiku-5-5` (`MATCH_VERIFIER_MODEL`): about a
-   dozen categorical facts in and one of three answers out is a narrow classification,
-   so a small, fast, low-cost model fits. No other model is ever called: there is no
-   fallback. Timeouts, errors, refusals, invalid or off-schema answers all count as
-   `unsure`, which means review.
-6. **Namesakes and duplicates.** Same name and birth date but different national ids
-   creates a `POSSIBLE_NAMESAKE` finding (also when a reviewer decides "different"). The
-   same measurement (patient, time, LOINC code) from two sources is stored once, with a
-   `DUPLICATE_RECORD` finding; only correct time-zone handling reveals it as the same.
-
-A match only adds a link; it never edits either record. Conflicting fields between
-matched records become findings with both values.
-
-### Uploads and jobs
-
-The API stores the file with a job row and returns `202`. A worker claims jobs with
-`FOR UPDATE SKIP LOCKED` (several workers never take the same job) and processes 500 rows
-per transaction, saving progress in the same transaction. Each row runs in a savepoint,
-so one bad row cannot fail the chunk. Transient errors (lost connection, deadlock) retry
-the whole chunk after 1 s, 4 s and 16 s; data errors never retry. A worker that dies is
-detected by its stale heartbeat and its job is taken over. Replaying a chunk is harmless
-because ingestion is idempotent. On `SIGTERM` the worker finishes the current chunk and
-puts the job back.
-
-`JobRunner` is the seam for a managed queue: the API only calls `runner.submit()`, and
-any consumer calls the same `process_job()`.
-
-### Observability and safety
-
-- Structured JSON logs with the request id, org id and key id on every line. Logs hold
-  ids, codes and counts only: never names, dates or payloads, and never exception
-  messages from the database or validation libraries, which can echo row values.
-- Every read of patient data and every decision is written to an append-only audit log
-  in the same transaction.
-- The dashboard is a static page under a strict Content-Security-Policy (only this
-  server's own script and styles). It renders every value as text, never as HTML, and
-  keeps the API key in the browser tab's session storage only.
-- API keys are `mvk_<prefix>_<secret>`: looked up by the public prefix, verified as an
-  HMAC-SHA256 with a server-side pepper, compared in constant time, never stored in plain.
-- Per-key rate limits (100 records/minute, 10 uploads/hour; raised for local use in
-  `docker-compose.override.yml`) return `429` with `Retry-After`. Request bodies are
-  capped while they stream (1 MB, 20 MB for uploads), including chunked requests that
-  send no `Content-Length`.
-
-## Development
-
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/), which installs
-Python 3.12 and every dependency. These commands work as written in PowerShell too:
-
-```bash
-uv sync                                   # Python 3.12 and all dependencies
-docker compose up -d db                   # Postgres on 127.0.0.1:5432
-uv run alembic upgrade head
-uv run pytest                             # unit + integration tests (skips integration if no DB)
-uv run ruff check .
-uv run ruff format --check .
-uv run mypy app scripts migrations tests
-uv run python -m scripts.security         # bandit, pip-audit, and trivy if installed
-uv run uvicorn --factory app.main:create_app --reload
-uv run python -m app.jobs.worker
-```
-
-Two more checks run against the whole stack (`docker compose up -d`). The browser tests
-need a browser: install Playwright's Chromium once (first line below), or skip that and
-use an installed one with `MEDVORA_E2E_CHANNEL=msedge` or `chrome`.
-
-```bash
-uv run --with playwright playwright install chromium        # once
-uv run python -m scripts.smoke                              # every API endpoint over HTTP, as each role
-MEDVORA_E2E=1 uv run --with playwright pytest tests/e2e     # every dashboard feature in a browser
-```
-
-PowerShell:
-
-```powershell
-uv run --with playwright playwright install chromium
-uv run python -m scripts.smoke
-$env:MEDVORA_E2E = "1"; uv run --with playwright pytest tests/e2e
-```
-
-Integration tests run the real app against Postgres as the real roles, in a separate
-`medvora_test` database (created by the role bootstrap), so they never touch your data
-and can run while the stack is up. Each test creates its own organisations, so
-row-level security keeps tests apart. CI (GitHub Actions) runs
-lint, strict type checks, `alembic check` (migrations must match the models), a
-downgrade/upgrade round trip, the full test suite against a Postgres service, the
-security checks, and a Docker build.
-
-### Security checks
-
-`uv run python -m scripts.security` runs bandit over the code that ships (`app`,
-`scripts`, `migrations`) and pip-audit over every version pinned in `uv.lock`. If
-[trivy](https://trivy.dev) is installed it also runs, scanning for committed secrets,
-Dockerfile misconfiguration and vulnerable packages; otherwise the script says it was
-skipped. Any finding makes the script fail. bandit skips two rules, for the reasons given
-in `pyproject.toml`: asserts that only narrow types, and `random` in the synthetic data
-generator.
-
-### Adding a source or fixing a mapping
-
-Add `mappings/<source>/v1.yaml` (see the existing three). To change one, copy it to
-`v<N+1>.yaml`, edit, restart the API and worker, then reprocess the affected quarantine
-items. Old versions stay so lineage keeps pointing at the rules that actually ran.
+CI runs lint, type checks, the migration check, the full test suite and the security checks on every push.
 
 ## Evaluation
 
-`uv run python -m scripts.evaluate` runs the pipeline and matcher over synthetic data whose
-ground truth is known. Source B carries realistic noise (nicknames, swapped day and
-month, dropped letters, moves, missing phones), and source C contains deliberate
-namesakes. With the defaults (500 patients, seed 7):
+`uv run python -m scripts.evaluate` generates 500 synthetic patients with known truth (including deliberate errors and namesakes), runs them through the real pipeline, and measures the results:
 
 | Measure | Result |
 | --- | --- |
-| No data loss (rows in = normalized + rejected) | yes: 2,839 = 2,809 + 30 |
-| Birth date, sex, weight, glucose, height vs ground truth | 100% |
-| Family name vs ground truth | 99.4% (the misses are typos as sent; matching scores them as "close") |
-| Matching precision (automatic matches) | 100%, 0 wrong links |
-| Matching recall, automatic | 88.8% |
-| Matching recall, automatic or sent to review | 100% |
-| Namesakes automatically matched | 0 |
+| Data loss | None: 2,839 rows in = 2,809 normalized + 30 quarantined |
+| Normalization accuracy | 100% for birth date, sex, weight, glucose and height; 99.4% for family name |
+| Matching precision | 100%: 453 automatic matches, 0 wrong |
+| Matching recall | 88.8% automatic; 100% including pairs sent to human review |
+| Namesakes merged | 0 of 10 |
 
-The trade-off is deliberate: pairs the rules cannot prove go to a person, not to a merge.
+The same code generated and evaluated this data, so real-world numbers would be lower; the evaluation shows the logic works as designed. See [the evaluation section](docs/system-design.md#16-evaluation).
 
-## Deploying (AWS demo)
-
-One EC2 instance runs the same containers as local, with Caddy in front for HTTPS.
-
-1. Launch an instance with EBS encryption and an Elastic IP. Security group: 80 and 443
-   only; use SSM Session Manager instead of SSH.
-2. Install Docker and the Compose plugin, clone the repository.
-3. Point a subdomain at the Elastic IP; set `DOMAIN` in `.env`.
-4. Create `.env` from `.env.example` with strong random secrets; `chmod 600 .env`.
-5. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
-   (migrations run automatically before the API and worker start).
-6. `docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm tools python -m scripts.seed --with-other-org > .demo.env`
-7. From your laptop: `uv run python -m scripts.demo --base-url https://<your domain> --keys-file .demo.env`
-8. Afterwards: terminate the instance, release the Elastic IP, delete snapshots.
-
-Only Caddy publishes ports; Postgres and the API are reachable only inside the Compose
-network. What production would change:
-
-| Part | Demo | Production |
-| --- | --- | --- |
-| Compute | One EC2 instance | ECS Fargate, several API and worker tasks |
-| Database | Postgres container | Amazon RDS (backups, encryption, failover) |
-| Job queue | Postgres job table | Amazon SQS, behind the same `JobRunner` |
-| Secrets | `.env` on the server | AWS Secrets Manager |
-| HTTPS | Caddy | Load balancer with an ACM certificate |
-| Logs | Docker logs | CloudWatch |
-| Rate limits | In process memory | Redis, shared by all API tasks |
-
-## Assumptions
-
-- Each source declares its date formats, time zone and code tables; nothing is guessed.
-- A source record id (MRN, accession number, ...) identifies a record within its source.
-  A payload with new content and the same id is a corrected version, not a new record.
-- The most recently *received* version is current; sources do not send a reliable
-  last-updated time.
-- National ids are comparable only when two sources use the same issuing system.
-- Observations in scope: body weight, height, glucose and heart rate, each with one
-  canonical unit. Clinical plausibility ranges are not checked.
-- Data in this repository is synthetic: SSNs start with 9 (never issued), emails use
-  `example.org`, phone numbers the 555 exchange.
-
-## Limitations
-
-- **Concurrent matching.** Two transactions ingesting the same patient at the same moment
-  do not see each other's uncommitted rows and may not link. A periodic re-match sweep
-  or per-block advisory locks would close this.
-- **Duplicate measurements depend on order.** An observation is recognised as a
-  duplicate only if the patients were already matched when it arrived.
-- **Name frequencies are approximate** within an upload chunk (counted once per chunk).
-- **Rate limits are per process.** Several API instances would need Redis.
-- **Mapping changes need a restart** of the API and worker.
-- **Resent payloads after a mapping fix** return the earlier (quarantined) result,
-  because the content is identical; use `/v1/quarantine/reprocess`.
-- **Failed API-key attempts are not rate limited** per client address; put that at the
-  edge (Caddy or a WAF).
-- Blood pressure (two components) and other compound observations are not modelled.
-
-## Next steps
-
-- Re-match sweep after verification, so late links also catch duplicate measurements.
-- Survivorship: a golden patient view choosing the best value per field across a group.
-- Admin endpoints for API keys and mapping uploads (validated, versioned, hot-reloaded).
-- SQS runner and consumer; S3 for uploaded files instead of the job row.
-- OpenTelemetry traces alongside the request id; Prometheus-format metrics.
-- A hand-labelled golden set from a pilot hospital to replace synthetic evaluation.
-
-## Project layout
+## Project structure
 
 ```text
 app/
-  pipeline/     pure functions: ingest hash, mapping, normalize/, validate, match, verify, run
-  models/       canonical.py (FHIR-lite Pydantic models), tables.py (SQLAlchemy)
-  services/     the database side: ingest, matching, records, uploads, audit, auth, verifiers
-  api/          routes, dependencies, RFC 9457 errors, pagination, limits
-  jobs/         JobRunner, process_job, the polling worker
-  observability/ logging, request ids, request middleware
-  static/       the dashboard (plain HTML, CSS and JS) and sample CSV files
-mappings/       one directory per source, one YAML file per version
-migrations/     Alembic migrations (rls.py: shared RLS and role helpers)
-scripts/        seed, generate_data, demo, evaluate, smoke, security
-tests/          unit/ (no database), integration/ (real Postgres), e2e/ (browser)
-deploy/         Postgres role bootstrap, Caddyfile
+  api/            HTTP routes, auth, limits, RFC 9457 errors
+  pipeline/       pure functions: mapping, normalization, validation, match scoring
+  services/       storage and orchestration: ingest, versions, quarantine, matching, audit
+  jobs/           background job runner and polling worker
+  models/         canonical (FHIR-lite) models and database tables
+  observability/  structured logging and request ids
+  static/         console UI
+mappings/         one YAML mapping per source
+migrations/       Alembic migrations, including row-level security
+scripts/          demo, synthetic data generator, evaluation, security checks
+tests/            unit, integration and browser tests
+deploy/           Postgres roles and the Caddy HTTPS proxy
+docs/             system design and tradeoff analysis
 ```
 
-`pipeline/` imports neither FastAPI nor the database: every stage is a function from
-data to data, tested in milliseconds. `services/` holds all storage; `api/` only
-translates HTTP.
+## Assumptions
+
+- Sources send structured CSV or JSON and can declare their date formats, time zone and codes in a mapping file.
+- Each source gives its records a stable id, so corrections are recognized as new versions.
+- Data volume per organization is moderate (up to low millions of records).
+- Each organization has someone to review uncertain matches and quarantined records.
+- Organizations never share patients through this system.
+- All data is synthetic.
+
+## Limitations
+
+- Identifiers (national ids, member numbers) are stored in plain text, protected by encryption at rest, row-level security and access control, but not by field-level encryption.
+- Conflicts and warnings are recorded but have no "resolved" workflow yet.
+- Rate limits are kept in process memory, so several API instances would each count separately; failed authentication attempts are not rate-limited.
+- Matching weights are set by hand, not learned from labelled data.
+- Out of scope: streaming ingest, HL7v2 and FHIR input, blood pressure, error tracking.
+
+## Possible improvements
+
+1. Field-level encryption or tokenization for identifiers.
+2. A resolution workflow for conflicts, and rules for choosing which value to show.
+3. Matching weights learned from labelled data.
+4. Error tracking and alerting.
+5. HL7v2 and FHIR input adapters.
+6. Streaming ingest, and SQS for background jobs.
+
+Details and reasoning: [system design, section 18](docs/system-design.md#18-assumptions-limitations-and-future-work).
+
+## Author
+
+Ritu Patil
